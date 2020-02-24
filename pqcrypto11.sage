@@ -16,6 +16,11 @@
 from sage.misc.sage_timeit import sage_timeit
 from sage.misc import misc
 import paths
+from pygost import gost34112012512
+from pygost.gost3412 import GOST3412Kuznechik
+from pygost.gost3413 import mac
+from pygost.utils import hexdec
+from pygost.utils import hexenc
 
 load('pqcrypto11.spyx')
 
@@ -27,6 +32,7 @@ load('pqcrypto11.spyx')
 # security is 1/4 of the bit size (third component of the name). The
 # theoretical quantum security is 1/6 of the bit size.
 parameters = {
+    'grebnev' : {'lA':2, 'lB': 3, 'eA': 451, 'eB': 284, 'f': 1, 'pm1' : -1},
     '2-3-8' : {'lA' : 2, 'lB' : 3, 'eA' : 6, 'eB' : 1, 'f' : 1, 'pm1' : -1},
     '2-3-40' : {'lA' : 2, 'lB' : 3, 'eA' : 22, 'eB' : 15, 'f' : 1, 'pm1' : -1},
     '2-3-256' : {'lA' : 2, 'lB' : 3, 'eA' : 130, 'eB' : 81, 'f' : 22, 'pm1' : -1},
@@ -247,6 +253,11 @@ def ss_isogeny_gen(lA, lB, eA, eB, f, pm1):
 
     return E, lA, eA, PA, QA, strA, lB, eB, PB, QB, strB
 
+def rand_subgroup(l, e):
+        if randrange(0, l+1):
+            return (1, randrange(0, l^e))
+        else:
+            return (l*randrange(0,l^(e-1)), 1)
 ################################################################################
 #                         KEY EXCHANGE
 ################################################################################
@@ -277,11 +288,7 @@ def ss_isogeny_exchange(E, lA, eA, PA, QA, strA, lB, eB, PB, QB, strB, measure=N
     misc.verbose()
 
     ct = misc.verbose("Randomly generating secret keys.")
-    def rand_subgroup(l, e):
-        if randrange(0, l+1):
-            return (1, randrange(0, l^e))
-        else:
-            return (l*randrange(0,l^(e-1)), 1)
+
     mA, nA = rand_subgroup(lA, eA)
     mB, nB = rand_subgroup(lB, eB)
 
@@ -347,3 +354,151 @@ def ss_isogeny_exchange(E, lA, eA, PA, QA, strA, lB, eB, PB, QB, strB, measure=N
         timings = A1,A2,B1,B2
         
     return EsA.j_invariant(), timings
+
+def ss_isogeny_limonnitsa(E, l2, e2, P2, Q2, str2, l3, e3, P3, Q3, str3, measure=None):
+    """
+    TODO COMMENTS
+    """
+    misc.verbose('**** KEY EXCHANGE(Limonnitsa) ****')
+    misc.verbose()
+    
+    AliceCurveE = E
+    AliceCurveBase_2 = l2
+    AliceCurveDeg_2 = e2
+    AliceCurveBase_3 = l3
+    AliceCurveDeg_3 = e3
+    AliceGeneratorP_2 = P2
+    AliceGeneratorP_3 = P3
+    AliceGeneratorQ_2 = Q2
+    AliceGeneratorQ_3 = Q3
+
+    BobCurveE = E
+    BobCurveBase_2 = l2
+    BobCurveDeg_2 = e2
+    BobCurveBase_3 = l3
+    BobCurveDeg_3 = e3
+    BobGeneratorP_2 = P2
+    BobGeneratorP_3 = P3
+    BobGeneratorQ_2 = Q2
+    BobGeneratorQ_3 = Q3
+    ID_A = "Alice"
+    ID_B = "Bob"
+    h2 = "0"
+    h3 = "1"
+
+#on Alice side
+    misc.verbose("Generating Alice's secret key")
+    sA_1, sA_2 = rand_subgroup(l2, e2)
+    AliceSecretKey = sA_1 * sA_2
+    misc.verbose("Generating Alice's Cert")
+    AliceCurvePhiA, Alice_P, Alice_Q = keygen_c(AliceGeneratorP_2, AliceGeneratorQ_2, 1, AliceSecretKey, AliceCurveBase_2, str2, AliceGeneratorP_3, AliceGeneratorQ_3)
+    
+#on Bob side
+    misc.verbose("Generating Bob's secret key")
+    sB_1, sB_2 = rand_subgroup(l2, e2)
+    BobSecretKey = sB_1 * sB_2
+    misc.verbose("Generating Bob's Cert")
+    BobCurvePhiB, Bob_P, Bob_Q = keygen_c(BobGeneratorP_2, BobGeneratorQ_2, 1, BobSecretKey, BobCurveBase_2, str2, BobGeneratorP_3, BobGeneratorQ_3)
+
+#beginning Limonnitsa
+    misc.verbose("Generating random k_A for Alice")
+    kA_1, kA_2 = rand_subgroup(l3, e3)
+    AliceK = kA_1 * kA_2
+    misc.verbose("Generating ephemerial piblic key on Alice side")
+    AliceCurveK_A, AlicePhi_AB_P2, AlicePhi_AB_Q2 = keygen_c(AliceGeneratorP_3, AliceGeneratorQ_3, 1, AliceK, AliceCurveBase_3, str3, BobGeneratorP_2, BobGeneratorQ_2)
+    AliceEphemerialString = str(AliceCurveK_A.A) + str(AliceCurveK_A.B) + str(AlicePhi_AB_P2.x) + str(AlicePhi_AB_P2.y) + str(AlicePhi_AB_P2.z) + str(AlicePhi_AB_Q2.x) + str(AlicePhi_AB_Q2.y) + str(AlicePhi_AB_Q2.z)
+#send to Bob: ID_A, Cert_A, K_A
+#on Bob side
+    misc.verbose("Generating random k_B for Bob")
+    kB_1, kB_2 = rand_subgroup(l3, e3)
+    BobK = kB_1 * kB_2
+    misc.verbose("Generating ephemerial piblic key on Bob side")
+    BobCurveK_B, BobPhi_BA_P2, BobPhi_BA_Q2 = keygen_c(BobGeneratorP_3, BobGeneratorQ_3, 1, BobK, BobCurveBase_3, str3, AliceGeneratorP_2, AliceGeneratorQ_2)
+    BobEphemerialString = str(BobCurveK_B.A) + str(BobCurveK_B.B) + str(BobPhi_BA_P2.x) + str(BobPhi_BA_P2.y) + str(BobPhi_BA_P2.z) + str(BobPhi_BA_Q2.x) + str(BobPhi_BA_Q2.y) + str(BobPhi_BA_Q2.z)
+    misc.verbose("Construct isogeny with kernel T_AB")
+    BobPsiE_AB, _, _ = keygen_c(Alice_P, Alice_Q, 1, BobK, BobCurveBase_3, str3)
+    misc.verbose("Construct isogeny with kernel T_AB'")
+    BobPsiE_AB_1, _, _ = keygen_c(AlicePhi_AB_P2, AlicePhi_AB_Q2, 1, BobSecretKey, BobCurveBase_2, str2)
+
+    str_BobSide = str(BobPsiE_AB.j_invariant()) + str(BobPsiE_AB_1.j_invariant()) + ID_A + ID_B
+    misc.verbose("KDF function on Bob side")
+    hash_BobSide = hash512(str_BobSide)
+    K_B, M_B = hash_BobSide[:len(hash_BobSide)/2], hash_BobSide[len(hash_BobSide)/2:]
+    misc.verbose("Calculate tag_B")
+    tag_B = Kuznechik_MAC(M_B, h2 + BobEphemerialString + AliceEphemerialString + ID_B + ID_A)
+#send to Alice: ID_B, Cert_B, K_B, tag_b
+#on Alice side
+    misc.verbose("Construct isogeny with kernel T_BA")
+    AlicePsiE_BA, _, _ = keygen_c(BobPhi_BA_P2, BobPhi_BA_Q2, 1, AliceSecretKey, AliceCurveBase_2, str2)
+    misc.verbose("Construct isogeny with kernel T_BA'")
+    AlicePsiE_BA_1, _, _ = keygen_c(Bob_P, Bob_Q, 1, AliceK, AliceCurveBase_3, str3)
+    str_AliceSide = str(AlicePsiE_BA.j_invariant()) + str(AlicePsiE_BA_1.j_invariant()) + ID_A + ID_B
+    misc.verbose("KDF function on Alice side")
+    hash_AliceSide = hash512(str_AliceSide)
+    K_A, M_A = hash_AliceSide[:len(hash_AliceSide)/2], hash_AliceSide[len(hash_AliceSide)/2:]
+    misc.verbose("Calculate tag_B'")
+    tag_B_1 = Kuznechik_MAC(M_A, h2 + BobEphemerialString + AliceEphemerialString + ID_B + ID_A)
+
+    if tag_B != tag_B_1:
+        raise RuntimeError, "ERROR: tag_B not match!" 
+
+    misc.verbose("Calculate tag_A")
+    tag_A = Kuznechik_MAC(M_A, h3 + AliceEphemerialString + BobEphemerialString + ID_A + ID_B)
+    misc.verbose("Calculate tag_A'")
+    tag_A_1 = Kuznechik_MAC(M_B, h3 + AliceEphemerialString + BobEphemerialString + ID_A + ID_B)
+
+    if tag_A != tag_A_1:
+        raise RuntimeError, "ERROR: tag_A not match!" 
+
+    misc.verbose("Congratulation! Limonnitsa finish successfully!")
+
+    timings = None
+    if measure is not None and measure:
+        misc.verbose('**** TIMINGS ****')
+        misc.verbose("Now we measure the real performances.")
+        misc.verbose("(This may take some time)")
+        misc.verbose()
+
+        context = globals()
+        context.update(locals())
+
+        if measure is True:
+            repeat = 3
+        else:
+            try:
+                repeat = int(measure)
+            except:
+                repeat = 3
+
+        misc.verbose("Bob KDF")
+        B1 = sage_timeit('hash_BobSide = hash512(str_BobSide)', context, repeat=repeat)
+        misc.verbose(B1)
+        misc.verbose("Bob tag_B")
+        B2 = sage_timeit('Kuznechik_MAC(M_B, h2 + BobEphemerialString + AliceEphemerialString + ID_B + ID_A)', context, repeat=repeat)
+        misc.verbose(B2)
+        misc.verbose()
+
+        misc.verbose("Alice KDF")
+        A1 = sage_timeit('hash512(str_AliceSide)', context, repeat=repeat)
+        misc.verbose(A1)
+        misc.verbose("Alice tag_B'")
+        A2 = sage_timeit('Kuznechik_MAC(M_A, h2 + BobEphemerialString + AliceEphemerialString + ID_B + ID_A)', context, repeat=repeat)
+        misc.verbose(A2)
+        misc.verbose("Alice tag_A")
+        A3 = sage_timeit('Kuznechik_MAC(M_A, h3 + AliceEphemerialString + BobEphemerialString + ID_A + ID_B)', context, repeat=repeat)
+        misc.verbose(A3)
+        misc.verbose("Bob tag_A'")
+        B3 = sage_timeit('Kuznechik_MAC(M_B, h3 + AliceEphemerialString + BobEphemerialString + ID_A + ID_B)', context, repeat=repeat)
+        misc.verbose(B3)
+        misc.verbose()
+        
+        timings = B1, B2, A1, A2, A3, B3
+    return timings
+
+
+def hash512(data):
+    return gost34112012512.new(data).hexdigest()
+
+def Kuznechik_MAC(key, data):
+    ciph = GOST3412Kuznechik(hexdec(key))
+    return hexenc(mac(ciph.encrypt, 16, data))
