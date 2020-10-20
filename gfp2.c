@@ -978,7 +978,7 @@ void push_through_iso(GF *A, GF *B, GF *A24,
 
 
 /********** FOR TEST PURPOSES *************/
-int main(int argc, void ** args) {
+int main(int argc, char ** args) {
   char* characteristic = NULL;
   long tours = 10000;
 
